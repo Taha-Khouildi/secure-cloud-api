@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: todo_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: todo_db
+    volumes:
+      - todo-postgres-data:/var/lib/postgresql
+  api:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: todo_db
+      DB_USER: todo_user
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+volumes:
+  todo-postgres-data:
+    external: true
