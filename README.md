@@ -2,7 +2,7 @@
 
 A small Todo REST API built with FastAPI and PostgreSQL, packaged with Docker Compose. This portfolio project starts with a reproducible local environment and will progressively add cloud deployment, automation, monitoring, and security testing.
 
-**Current stage:** Local API and database implementation. AWS, Terraform, GitHub Actions, and k3s are planned work.
+**Current stage:** Stage 2 — First Azure infrastructure deployment completed with Terraform. SSH access and infrastructure cleanup were verified. Deploying the FastAPI and PostgreSQL containers to the VM is the next step.
 
 ## What it does
 
@@ -169,6 +169,43 @@ docker compose up --build -d
 | `/health` works but `/db-health` or `/todos` fails | Check `docker compose logs db api`, confirm PostgreSQL is ready, and verify the configured password matches the initialized database. |
 | `todos` table is missing after changing `init.sql` | Initialization scripts only run against an empty data directory. Apply the schema manually or reset the disposable local database. |
 
+## Stage 2 — First Azure deployment
+
+### Infrastructure created with Terraform
+
+- Azure Resource Group.
+- Virtual Network and subnet.
+- Network Security Group with SSH access restricted to my public IP.
+- Public IP and Network Interface.
+- Ubuntu Linux VM using the `Standard_B1ms` size.
+
+### What I tested
+
+| Command or action | Result |
+| --- | --- |
+| `terraform init` | Initialized Terraform and its provider. |
+| `terraform validate` | Validated the configuration. |
+| `terraform plan` | Previewed infrastructure changes. |
+| `terraform apply` | Created 9 Azure resources. |
+| SSH with an Ed25519 key | Successfully connected to the Azure VM. |
+| `terraform plan -destroy` | Previewed infrastructure deletion. |
+| `terraform destroy` | Deleted the infrastructure. |
+| `az group exists` | Verified that the Resource Group was removed. |
+
+### Problems encountered and lessons learned
+
+Terraform initially stalled while automatically registering Azure Resource Providers. I resolved this by setting the following option in the AzureRM provider configuration:
+
+```hcl
+resource_provider_registrations = "none"
+```
+
+Before deployment, I also checked Azure VM SKU restrictions and CPU quotas.
+
+**Key lesson:** Terraform manages the Azure infrastructure, while Docker will run the existing FastAPI and PostgreSQL application on that infrastructure.
+
+**Cost control:** I destroyed the Azure resources after the practice session to conserve student credits. Future practice sessions should also end with infrastructure cleanup.
+
 ## Repository layout
 
 ```text
@@ -178,6 +215,7 @@ docker compose up --build -d
 │   └── database.py      # PostgreSQL connection configuration
 ├── db/
 │   └── init.sql         # Initial todos schema
+├── terraform/          # Azure infrastructure configuration
 ├── .env.example        # Local configuration template
 ├── compose.yaml        # API, database, network, and persistent volume
 ├── Dockerfile          # Python application image
@@ -188,12 +226,12 @@ docker compose up --build -d
 
 ## Current scope and roadmap
 
-The current implementation is a local development foundation. It has no authentication, authorization, application TLS configuration, or automated test suite. Database queries use parameterized values for todo creation, and the API port is bound to the host's loopback interface.
+The application currently runs locally with Docker Compose. Azure infrastructure provisioning, SSH access, and cleanup have been tested with Terraform. The application has no authentication, authorization, application TLS configuration, or automated test suite. Database queries use parameterized values for todo creation, and the local API port is bound to the host's loopback interface.
 
 Planned work includes:
 
 - Verify setup from a fresh clone and add automated API tests.
 - Add service readiness checks and database migrations.
-- Provision AWS infrastructure with Terraform.
+- Deploy the existing FastAPI and PostgreSQL containers to the Azure VM.
 - Automate validation and deployment with GitHub Actions.
 - Explore k3s deployment, monitoring, and security testing.
