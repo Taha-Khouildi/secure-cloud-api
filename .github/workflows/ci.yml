@@ -7,28 +7,28 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-        steps:
-          - name: Checkout repository
-            uses: actions/checkout@v4
-          
-          - name: Set up Python
-            uses: actions/setup-python@v5
-            with:
-              python-version: "3.14"
-          
-          - name: Install dependencies
-            run: python -m pip install -r requirements-dev.txt
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-          - name: Run tests
-            run: python -m pytest -v
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
 
-          - name: Build Docker image
-            run: docker build -t secure-cloud-api:test .
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
 
-          - name: Scan Docker image with Trivy
-            uses: aquasecurity/trivy-action@v0.36.0
-            with:
-              image-ref: secure-cloud-api:test
-              format: table
-              severity: HIGH,CRITICAL
-              exit-code: '0'
+      - name: Run tests
+        run: python -m pytest -v
+
+      - name: Build Docker image
+        run: docker build -t secure-cloud-api:test .
+
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: secure-cloud-api:test
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '0'
