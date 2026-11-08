@@ -50,7 +50,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
 
-              - name: Push Docker image to GHCR
+      - name: Push Docker image to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           docker tag secure-cloud-api:test ghcr.io/${GITHUB_REPOSITORY,,}:latest
