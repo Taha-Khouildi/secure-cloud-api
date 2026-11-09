@@ -1,0 +1,10 @@
+#cloud-config
+package_update: true
+
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+
+runcmd:
+  - git clone https://github.com/Taha-Khouildi/secure-cloud-api.git /opt/secure-cloud-api
