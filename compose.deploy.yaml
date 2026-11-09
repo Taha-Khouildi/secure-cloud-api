@@ -1,0 +1,4 @@
+services:
+  api:
+    image: ghcr.io/taha-khouildi/secure-cloud-api:latest
+    build: !reset null
