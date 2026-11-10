@@ -1,8 +1,23 @@
 # Secure Cloud API
 
-A small Todo REST API built with FastAPI and PostgreSQL, packaged with Docker Compose. This portfolio project starts with a reproducible local environment and will progressively add cloud deployment, automation, monitoring, and security testing.
+A Todo REST API built with FastAPI and PostgreSQL, packaged with Docker Compose. This portfolio project brings together local development, automated testing, container scanning, image publishing, and Azure infrastructure managed with Terraform.
 
-**Current stage:** Stage 2 — First Azure infrastructure deployment completed with Terraform. SSH access and infrastructure cleanup were verified. Deploying the FastAPI and PostgreSQL containers to the VM is the next step.
+**Current status:** Local Compose setup, a health endpoint test, and a GitHub Actions pipeline are implemented. Azure provisioning, SSH access, and cleanup have previously been verified. The repository also includes VM bootstrapping and a Compose override for deploying the published image; application deployment remains a manual step.
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [API reference](#api-reference)
+- [Configuration and storage](#configuration-and-storage)
+- [Development and testing](#development-and-testing)
+- [CI and container publishing](#ci-and-container-publishing)
+- [Azure deployment](#azure-deployment)
+- [Everyday commands](#everyday-commands)
+- [Troubleshooting](#troubleshooting)
+- [Repository layout](#repository-layout)
+- [Security and roadmap](#security-and-roadmap)
 
 ## What it does
 
@@ -14,6 +29,17 @@ A small Todo REST API built with FastAPI and PostgreSQL, packaged with Docker Co
 
 The application image uses Python 3.14, and the database uses PostgreSQL 18. Python dependencies are pinned in [requirements.txt](requirements.txt).
 
+## Architecture
+
+```mermaid
+flowchart LR
+    Client[Browser or curl] -->|localhost:8000| API[FastAPI container]
+    API -->|Compose network: db:5432| DB[PostgreSQL container]
+    DB --> Volume[(Named data volume)]
+```
+
+The same Compose stack runs locally or on an Azure Ubuntu VM. On the VM, the API stays bound to loopback and is accessed through an SSH tunnel. Terraform creates the infrastructure; cloud-init installs Docker, Compose, and Git and clones the repository. Starting the application is a separate manual step.
+
 ## Quick start
 
 ### Prerequisites
@@ -23,7 +49,12 @@ The application image uses Python 3.14, and the database uses PostgreSQL 18. Pyt
 - Port `8000` available on your machine.
 - `curl` for the request examples below, or a browser for the interactive documentation.
 
-Run these commands from the cloned repository's root directory:
+Clone the repository, then run the remaining commands from its root directory:
+
+```bash
+git clone https://github.com/Taha-Khouildi/secure-cloud-api.git
+cd secure-cloud-api
+```
 
 1. Create your local configuration:
 
@@ -134,6 +165,156 @@ The `todo-postgres-data` named volume stores PostgreSQL data at `/var/lib/postgr
 
 Changing `POSTGRES_PASSWORD` in `.env` also does not change the password stored in an initialized database. Keep the values consistent, or reset the disposable local database as described below.
 
+## Development and testing
+
+For local tests, use Python 3.14 and a virtual environment:
+
+```bash
+python3.14 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m pytest -v
+```
+
+The current suite contains one test in [tests/test_health.py](tests/test_health.py). It uses FastAPI's `TestClient` to verify the `/health` response and does not need a running database. Database connectivity and todo persistence are currently checked manually with the requests above; they are not covered by automated tests.
+
+The container copies application code into its image, so rebuild it after source changes:
+
+```bash
+docker compose up --build -d api
+```
+
+## CI and container publishing
+
+The [GitHub Actions workflow](.github/workflows/ci.yml) runs on pushes and pull requests. It:
+
+1. Sets up Python 3.14 and installs the development dependencies.
+2. Runs `python -m pytest -v`.
+3. Builds the application image as `secure-cloud-api:test`.
+4. Scans that image with Trivy, failing on fixable `HIGH` or `CRITICAL` vulnerabilities. Unfixed findings are ignored by this check.
+5. On pushes to `main`, authenticates with `GITHUB_TOKEN` and publishes `ghcr.io/taha-khouildi/secure-cloud-api:latest` after the preceding checks pass.
+
+Pull requests do not publish images. The workflow does not deploy to Azure; the VM must pull and start the published image manually. The deployment override uses the mutable `latest` tag, so its contents change after successful builds on `main`.
+
+## Azure deployment
+
+### Infrastructure and prerequisites
+
+The configuration in [terraform/](terraform/) provisions:
+
+- A resource group in `francecentral`.
+- A virtual network (`10.0.0.0/16`) and subnet (`10.0.1.0/24`).
+- A Network Security Group attached to the subnet, with an SSH rule restricted to your supplied public IPv4 address (`/32`).
+- A static Standard public IP and network interface.
+- An Ubuntu 24.04 LTS VM (`Standard_B1ms`) with a 32 GB Standard SSD and the `azureuser` administrator account.
+
+You need Terraform, the Azure CLI, an Azure subscription with permission to create these resources, and an SSH key pair. Confirm that your subscription permits the configured VM size and region and has sufficient quota.
+
+The VM configuration expects the public key at `~/.ssh/azure_secure_cloud_api.pub`. If that key pair does not already exist, create it:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/azure_secure_cloud_api
+```
+
+### Provision the VM
+
+Authenticate and choose your subscription:
+
+```bash
+az login
+az account set --subscription "YOUR_SUBSCRIPTION_ID"
+export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+```
+
+Create `terraform/terraform.tfvars`, replacing the example address with your current public IPv4 address, without a CIDR suffix:
+
+```hcl
+ssh_allowed_ip = "203.0.113.10"
+```
+
+Terraform variable files and state files are excluded from Git. From the repository root:
+
+```bash
+cd terraform
+terraform init
+terraform validate
+terraform plan
+terraform apply
+```
+
+The AzureRM provider is configured with `resource_provider_registrations = "none"` because automatic registration stalled during an earlier deployment. Required Azure resource providers must already be registered in the subscription; if provisioning reports a missing provider registration, resolve it before retrying.
+
+Retrieve the VM address and connect from your local terminal:
+
+```bash
+VM_PUBLIC_IP=$(az network public-ip show \
+  --resource-group rg-secure-cloud-api \
+  --name pip-secure-cloud-api \
+  --query ipAddress -o tsv)
+
+ssh -i ~/.ssh/azure_secure_cloud_api "azureuser@$VM_PUBLIC_IP"
+```
+
+### Start the application on the VM
+
+[terraform/cloud-init.yaml](terraform/cloud-init.yaml) installs `docker.io`, `docker-compose-v2`, and `git`, then clones this repository into `/opt/secure-cloud-api`. It does not create `.env` or start containers.
+
+Run these commands in the SSH session. Wait for cloud-init to finish successfully before continuing:
+
+```bash
+sudo cloud-init status --wait
+sudo docker compose version
+cd /opt/secure-cloud-api
+sudo install -m 600 .env.example .env
+sudoedit .env
+```
+
+Set `POSTGRES_PASSWORD` to a database password of your choice. Create this file once; preserve the password when restarting an existing database.
+
+The [deployment override](compose.deploy.yaml) removes the local build configuration and selects the GHCR image. Both Compose files are required:
+
+```bash
+sudo docker compose -f compose.yaml -f compose.deploy.yaml pull
+sudo docker compose -f compose.yaml -f compose.deploy.yaml up -d
+sudo docker compose -f compose.yaml -f compose.deploy.yaml ps
+sudo docker compose -f compose.yaml -f compose.deploy.yaml exec db \
+  pg_isready -U todo_user -d todo_db
+```
+
+The image must have been published by a successful push to `main`. If the GHCR package is private, authenticate with `sudo docker login ghcr.io -u YOUR_GITHUB_USERNAME` using a token with permission to read the package before pulling.
+
+Once PostgreSQL reports that it is accepting connections, verify the API on the VM:
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/db-health
+```
+
+To update the application later, repeat the `pull` and `up -d` commands with both Compose files. Cloud-init only clones the repository during initial provisioning; image updates do not update the checked-out Compose or schema files.
+
+### Access the API from your computer
+
+In a local terminal with `VM_PUBLIC_IP` set as above, open a tunnel and keep it running:
+
+```bash
+ssh -i ~/.ssh/azure_secure_cloud_api \
+  -L 8000:127.0.0.1:8000 -N "azureuser@$VM_PUBLIC_IP"
+```
+
+Open [Swagger UI](http://localhost:8000/docs) or use the same local request examples. Local port `8000` must be free; stop your local Compose stack first if it is using that port. The deployment does not expose the API directly on the VM's public IP.
+
+### Clean up Azure resources
+
+When finished, run the following locally from `terraform/`, using the same subscription and Terraform state as provisioning:
+
+```bash
+terraform plan -destroy
+terraform destroy
+az group exists --name rg-secure-cloud-api
+```
+
+The final command should return `false`. Destroying this infrastructure deletes the VM and its database data. The Docker volume persists across container restarts on that VM, but is not a backup and does not survive infrastructure deletion. Keep your Terraform state until cleanup is complete so Terraform can track the resources it created.
+
 ## Everyday commands
 
 ```bash
@@ -162,76 +343,65 @@ docker compose up --build -d
 
 ## Troubleshooting
 
+These Docker commands assume a local checkout. On the VM, use `sudo docker compose -f compose.yaml -f compose.deploy.yaml` in place of `docker compose`.
+
 | Symptom | What to check |
 | --- | --- |
 | Docker cannot connect to its daemon | Start Docker Engine or Docker Desktop, then retry. |
 | Port `8000` is already in use | Stop the conflicting process, or change the host port in `compose.yaml` and adjust the example URLs. |
 | `/health` works but `/db-health` or `/todos` fails | Check `docker compose logs db api`, confirm PostgreSQL is ready, and verify the configured password matches the initialized database. |
 | `todos` table is missing after changing `init.sql` | Initialization scripts only run against an empty data directory. Apply the schema manually or reset the disposable local database. |
-
-## Stage 2 — First Azure deployment
-
-### Infrastructure created with Terraform
-
-- Azure Resource Group.
-- Virtual Network and subnet.
-- Network Security Group with SSH access restricted to my public IP.
-- Public IP and Network Interface.
-- Ubuntu Linux VM using the `Standard_B1ms` size.
-
-### What I tested
-
-| Command or action | Result |
-| --- | --- |
-| `terraform init` | Initialized Terraform and its provider. |
-| `terraform validate` | Validated the configuration. |
-| `terraform plan` | Previewed infrastructure changes. |
-| `terraform apply` | Created 9 Azure resources. |
-| SSH with an Ed25519 key | Successfully connected to the Azure VM. |
-| `terraform plan -destroy` | Previewed infrastructure deletion. |
-| `terraform destroy` | Deleted the infrastructure. |
-| `az group exists` | Verified that the Resource Group was removed. |
-
-### Problems encountered and lessons learned
-
-Terraform initially stalled while automatically registering Azure Resource Providers. I resolved this by setting the following option in the AzureRM provider configuration:
-
-```hcl
-resource_provider_registrations = "none"
-```
-
-Before deployment, I also checked Azure VM SKU restrictions and CPU quotas.
-
-**Key lesson:** Terraform manages the Azure infrastructure, while Docker will run the existing FastAPI and PostgreSQL application on that infrastructure.
-
-**Cost control:** I destroyed the Azure resources after the practice session to conserve student credits. Future practice sessions should also end with infrastructure cleanup.
+| SSH to Azure times out | Confirm the VM is running and `ssh_allowed_ip` matches your current public IPv4 address; apply the updated Terraform configuration if your address changed. |
+| cloud-init fails or the repository is missing on the VM | Inspect `sudo cloud-init status --long` and `/var/log/cloud-init-output.log`. |
+| Pulling the deployment image fails | Confirm CI published the image and authenticate to GHCR if the package is private. |
+| The VM's public IP does not serve port `8000` | Use the SSH tunnel above; the API binds to loopback and there is no public API ingress rule. |
 
 ## Repository layout
 
 ```text
 .
+├── .github/workflows/
+│   └── ci.yml            # Tests, Docker build, Trivy scan, and GHCR publishing
 ├── app/
-│   ├── main.py          # FastAPI application, request model, and routes
-│   └── database.py      # PostgreSQL connection configuration
+│   ├── main.py           # FastAPI application, request model, and routes
+│   └── database.py       # PostgreSQL connection configuration
 ├── db/
-│   └── init.sql         # Initial todos schema
-├── terraform/          # Azure infrastructure configuration
-├── .env.example        # Local configuration template
-├── compose.yaml        # API, database, network, and persistent volume
-├── Dockerfile          # Python application image
-├── requirements.txt    # Pinned Python dependencies
-├── notes.md            # Development journal; some progress notes are historical
+│   └── init.sql          # Initial todos schema
+├── terraform/
+│   ├── main.tf           # Azure network, SSH rule, and Ubuntu VM
+│   ├── providers.tf      # AzureRM provider configuration
+│   ├── variables.tf      # Allowed SSH source address
+│   └── cloud-init.yaml   # Install Docker/Compose/Git and clone the repository
+├── tests/
+│   └── test_health.py    # Application health test
+├── .env.example         # Local configuration template
+├── compose.yaml         # API, database, network, and persistent volume
+├── compose.deploy.yaml  # Override to run the published GHCR image
+├── Dockerfile           # Python application image
+├── requirements.txt     # Pinned Python dependencies
+├── requirements-dev.txt # Runtime dependencies plus pytest and httpx
+├── notes.md             # Development journal; some progress notes are historical
 └── README.md
 ```
 
-## Current scope and roadmap
+## Security and roadmap
 
-The application currently runs locally with Docker Compose. Azure infrastructure provisioning, SSH access, and cleanup have been tested with Terraform. The application has no authentication, authorization, application TLS configuration, or automated test suite. Database queries use parameterized values for todo creation, and the local API port is bound to the host's loopback interface.
+Current controls include:
+
+- Parameterized SQL values for todo creation and request title length validation.
+- An application container running as the unprivileged `appuser` (UID `10001`), with `pip` removed from the final image.
+- A loopback-only API port and no published PostgreSQL host port.
+- SSH key authentication with password login disabled and an ingress rule restricted to one public IPv4 address.
+- Git exclusions for `.env`, Terraform variables, and Terraform state, plus a Docker build-context exclusion for `.env`.
+- A CI image scan for fixable high and critical vulnerabilities.
+
+This remains a learning project: authentication, authorization, application TLS, rate limiting, database backups, and migrations are not implemented. The image scan is one check, not a guarantee that the application is secure. Keep access limited while those controls are developed.
 
 Planned work includes:
 
-- Verify setup from a fresh clone and add automated API tests.
+- Add database integration tests for todo creation, listing, and invalid input.
 - Add service readiness checks and database migrations.
-- Deploy the existing FastAPI and PostgreSQL containers to the Azure VM.
-- Automate validation and deployment with GitHub Actions.
+- Verify the full application deployment on Azure and automate deployment after CI.
+- Add authentication, TLS, backups, and stronger secret management.
+- Publish versioned images for repeatable deployments and rollback.
 - Explore k3s deployment, monitoring, and security testing.
