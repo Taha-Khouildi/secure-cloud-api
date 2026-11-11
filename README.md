@@ -649,6 +649,82 @@ The GitHub repository, published container image, Terraform source code, and loc
 
 ---
 
+## Local Kubernetes Deployment (Stage 4)
+
+The FastAPI and PostgreSQL application has been successfully deployed to a local single-node Kubernetes cluster using k3s.
+
+### Kubernetes resources
+
+The `k8s/` directory contains YAML manifests defining:
+
+- FastAPI Deployment and ClusterIP Service.
+- PostgreSQL Deployment and ClusterIP Service.
+- PersistentVolumeClaim for PostgreSQL data.
+- Readiness probes for FastAPI and PostgreSQL.
+
+The application also uses a Kubernetes Secret named `postgres-secret` for database credentials and a ConfigMap named `postgres-init` containing the SQL initialization script.
+
+### Deployment
+
+**Prerequisites:** A running k3s cluster, the `secure-cloud-api` namespace, and access to the published GHCR image.
+
+Create the PostgreSQL Secret securely before deploying. See the [learning notes](notes.md) for the configuration and security considerations.
+
+Create the SQL ConfigMap from the repository's existing script:
+
+```bash
+sudo k3s kubectl create configmap postgres-init \
+  -n secure-cloud-api \
+  --from-file=init.sql=db/init.sql
+```
+
+Apply the manifests:
+
+```bash
+sudo k3s kubectl apply -f k8s/
+```
+
+Check the application and storage:
+
+```bash
+sudo k3s kubectl get pods,pvc,services -n secure-cloud-api
+```
+
+Forward the API Service to your laptop:
+
+```bash
+sudo k3s kubectl port-forward \
+  -n secure-cloud-api svc/fastapi \
+  8000:8000 --address 127.0.0.1
+```
+
+In another terminal, test:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/db-health
+curl http://127.0.0.1:8000/todos
+```
+
+### Verification
+
+The local deployment was tested successfully:
+
+- FastAPI and PostgreSQL Pods reached `Ready`.
+- The API connected to PostgreSQL through its ClusterIP Service.
+- Creating and retrieving Todos worked.
+- PostgreSQL data survived a Pod replacement.
+
+### Known limitation
+
+On the local Ubuntu learning environment, an AppArmor/containerd compatibility problem prevented PostgreSQL from starting correctly. The PostgreSQL container currently uses `appArmorProfile: Unconfined` as a **temporary local workaround**.
+
+This weakens container isolation and must not be treated as production-ready security configuration. The proper long-term solution is to restore AppArmor confinement with a compatible, corrected policy.
+
+The existing PostgreSQL volume also required manual creation of `todo_db` and execution of `db/init.sql`. Therefore, **fully automated fresh-cluster initialization has not yet been verified**. Additional work is needed before the Kubernetes setup can be considered reproducible from scratch.
+
+---
+
 # 6. Troubleshooting
 
 | Problem | What to check |
@@ -707,7 +783,7 @@ This is an educational portfolio project, **not a production-ready service**.
 - No TLS termination or public HTTPS endpoint.
 - No production secrets-management service.
 - No automated deployment from GitHub Actions to Azure.
-- No Kubernetes orchestration.
+- Local k3s deployment uses a temporary AppArmor workaround; fully automated fresh-cluster initialization remains unverified.
 - No centralized monitoring or alerting.
 - No comprehensive security assessment.
 - No production-grade backup or high-availability design.
@@ -725,7 +801,7 @@ These limitations are intentionally documented so that completed work is not con
 | 1 | FastAPI + PostgreSQL with Docker Compose | ✅ Completed |
 | 2 | Azure infrastructure with Terraform | ✅ Completed and tested |
 | 3 | GitHub Actions, Trivy, GHCR, and VM deployment | ✅ Core workflow completed |
-| 4 | k3s deployment | Planned |
+| 4 | k3s deployment | ✅ Locally tested; fresh-cluster initialization unverified |
 | 5 | Prometheus, Grafana, Loki, and alerting | Planned |
 | 6 | Security testing and findings write-up | Planned |
 | 7 | Final architecture diagram and portfolio documentation | Planned |

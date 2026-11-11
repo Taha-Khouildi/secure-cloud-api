@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi
+  namespace: secure-cloud-api
+
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fastapi
+  template:
+    metadata:
+      labels:
+        app: fastapi
+    spec:
+     containers:
+       - name: fastapi
+         image: ghcr.io/taha-khouildi/secure-cloud-api:latest
+         ports:
+           - containerPort: 8000
+         readinessProbe:
+           httpGet:
+             path: /health
+             port: 8000
+           initialDelaySeconds: 5
+           periodSeconds: 10
+         env:
+           - name: DB_HOST
+             value: "db"
+           - name: DB_PORT
+             value: "5432"
+           - name: DB_NAME
+             value: "todo_db"
+           - name: DB_USER
+             value: "todo_user"
+           - name: DB_PASSWORD
+             valueFrom:
+               secretKeyRef:
+                 name: postgres-secret
+                 key: POSTGRES_PASSWORD

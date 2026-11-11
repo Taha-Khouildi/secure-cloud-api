@@ -523,3 +523,61 @@ Documentation links retained from the original setup journal:
 - [Docker Compose](https://docs.docker.com/compose/)
 - [Git documentation](https://git-scm.com/docs)
 - [FastAPI documentation](https://fastapi.tiangolo.com/)
+
+---
+
+## Stage 4 — Kubernetes: PostgreSQL Debugging
+
+### Problem 1: PostgreSQL was Running but not accepting connections
+
+**Symptoms:**
+
+- Kubernetes showed the PostgreSQL Pod as `1/1 Running`.
+- `/db-health` returned HTTP 500.
+- `pg_isready` returned `no response`.
+- PostgreSQL's startup process consumed almost 100% CPU.
+
+**Investigation:**
+
+- Inspected Pod status and Kubernetes Service endpoints.
+- Checked PostgreSQL processes using `kubectl exec`.
+- Inspected Linux kernel logs using `journalctl`.
+- Found AppArmor `DENIED` messages involving process signals.
+- Identified a suspected compatibility issue involving Ubuntu's kernel, AppArmor, and containerd.
+
+**Temporary workaround:**
+
+Configured the PostgreSQL container with:
+
+```yaml
+securityContext:
+  appArmorProfile:
+    type: Unconfined
+```
+
+After updating the Deployment, PostgreSQL began accepting connections.
+
+**Security trade-off:** This disables AppArmor confinement for the PostgreSQL container. It is a temporary workaround for our local development cluster, not a production security configuration. A future improvement is to use a corrected containerd/AppArmor policy and restore confinement.
+
+### Problem 2: Application database was missing
+
+**Symptoms:**
+
+- PostgreSQL accepted connections.
+- FastAPI returned `FATAL: database "todo_db" does not exist`.
+
+**Cause:**
+
+The PostgreSQL data directory on the persistent volume had already been initialized without `todo_db`. PostgreSQL's initialization environment variables and SQL scripts only run when initializing an empty data directory.
+
+**Resolution:**
+
+Created `todo_db` using `psql`, then executed the existing `db/init.sql` to create the `todos` table.
+
+**Final verification:**
+
+- `/db-health` returned HTTP 200.
+- `POST /todos` successfully created a Todo.
+- `GET /todos` returned the saved Todo.
+
+**Lesson learned:** A Kubernetes Pod showing `Running` does not guarantee the application inside it is healthy. Application readiness checks and careful log inspection are essential.
