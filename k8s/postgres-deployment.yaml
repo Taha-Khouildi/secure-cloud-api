@@ -22,9 +22,6 @@ spec:
             appArmorProfile:
               type: Unconfined
 
-            runAsUser: 999
-            runAsGroup: 999
-
           env:
             - name: POSTGRES_USER
               value: todo_user
