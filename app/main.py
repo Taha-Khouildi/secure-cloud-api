@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
-
+from prometheus_fastapi_instrumentator import Instrumentator
 from app.database import get_connection
 
 app = FastAPI()
-
+Instrumentator().instrument(app).expose(app)
 
 class TodoCreate(BaseModel):
     title: str = Field(min_length=1, max_length=255)
