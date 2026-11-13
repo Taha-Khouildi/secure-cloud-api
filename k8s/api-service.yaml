@@ -3,10 +3,13 @@ kind: Service
 metadata:
   name: fastapi
   namespace: secure-cloud-api
+  labels:
+    app: fastapi
 spec:
   type: ClusterIP
   selector:
     app: fastapi
   ports:
-    - port: 8000
+    - name: http
+      port: 8000
       targetPort: 8000
