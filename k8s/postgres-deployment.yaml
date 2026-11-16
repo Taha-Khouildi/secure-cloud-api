@@ -43,6 +43,10 @@ spec:
                 - "127.0.0.1"
                 - -p
                 - "5432"
+                - -U
+                - todo_user
+                - -d
+                - todo_db
             initialDelaySeconds: 5
             periodSeconds: 10
 
