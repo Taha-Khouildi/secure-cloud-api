@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fastapi-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: fastapi.rules
+      rules:
+        - alert: FastAPIDown
+          expr: absent(up{namespace="secure-cloud-api", service="fastapi"}) or (up{namespace="secure-cloud-api", service="fastapi"} == 0)
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "FastAPI is unreachable"
+            description: "Prometheus has been unable to scrape FastAPI for 2 minutes."
