@@ -14,8 +14,26 @@ spec:
       labels:
         app: fastapi
     spec:
-     containers:
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+
+
+      containers:
        - name: fastapi
+         securityContext:
+           runAsNonRoot: true
+           runAsUser: 10001
+           allowPrivilegeEscalation: false
+           readOnlyRootFilesystem: true
+           capabilities:
+             drop:
+               - ALL
+
          image: ghcr.io/taha-khouildi/secure-cloud-api:latest
          ports:
            - containerPort: 8000

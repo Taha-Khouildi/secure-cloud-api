@@ -1,0 +1,147 @@
+
+Report Summary
+
+┌────────────────────────────────┬────────────┬───────────────────┐
+│             Target             │    Type    │ Misconfigurations │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ Dockerfile                     │ dockerfile │         0         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ k8s/api-deployment.yaml        │ kubernetes │         3         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ k8s/api-service.yaml           │ kubernetes │         0         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ k8s/api-servicemonitor.yaml    │ kubernetes │         0         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ k8s/postgres-deployment.yaml   │ kubernetes │         2         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ k8s/postgres-pvc.yaml          │ kubernetes │         0         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ k8s/postgres-service.yaml      │ kubernetes │         0         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ monitoring/fastapi-alerts.yaml │ kubernetes │         0         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ terraform                      │ terraform  │         0         │
+├────────────────────────────────┼────────────┼───────────────────┤
+│ terraform/main.tf              │ terraform  │         0         │
+└────────────────────────────────┴────────────┴───────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+
+k8s/api-deployment.yaml (kubernetes)
+====================================
+Tests: 24 (SUCCESSES: 21, FAILURES: 3)
+Failures: 3 (HIGH: 3, CRITICAL: 0)
+
+KSV-0014 (HIGH): Container 'fastapi' of Deployment 'fastapi' should set 'securityContext.readOnlyRootFilesystem' to true
+════════════════════════════════════════
+An immutable root file system prevents applications from writing to their local disk. This can limit intrusions, as attackers will not be able to tamper with the file system or write foreign executables to disk.
+
+See https://avd.aquasec.com/misconfig/ksv-0014
+────────────────────────────────────────
+ k8s/api-deployment.yaml:18-41
+────────────────────────────────────────
+  18 ┌        - name: fastapi
+  19 │          image: ghcr.io/taha-khouildi/secure-cloud-api:latest
+  20 │          ports:
+  21 │            - containerPort: 8000
+  22 │          readinessProbe:
+  23 │            httpGet:
+  24 │              path: /health
+  25 │              port: 8000
+  26 └            initialDelaySeconds: 5
+  ..   
+────────────────────────────────────────
+
+
+KSV-0118 (HIGH): container fastapi in secure-cloud-api namespace is using the default security context
+════════════════════════════════════════
+Security context controls the allocation of security parameters for the pod/container/volume, ensuring the appropriate level of protection. Relying on default security context may expose vulnerabilities to potential attacks that rely on privileged access.
+
+See https://avd.aquasec.com/misconfig/ksv-0118
+────────────────────────────────────────
+ k8s/api-deployment.yaml:18-41
+────────────────────────────────────────
+  18 ┌        - name: fastapi
+  19 │          image: ghcr.io/taha-khouildi/secure-cloud-api:latest
+  20 │          ports:
+  21 │            - containerPort: 8000
+  22 │          readinessProbe:
+  23 │            httpGet:
+  24 │              path: /health
+  25 │              port: 8000
+  26 └            initialDelaySeconds: 5
+  ..   
+────────────────────────────────────────
+
+
+KSV-0118 (HIGH): deployment fastapi in secure-cloud-api namespace is using the default security context, which allows root privileges
+════════════════════════════════════════
+Security context controls the allocation of security parameters for the pod/container/volume, ensuring the appropriate level of protection. Relying on default security context may expose vulnerabilities to potential attacks that rely on privileged access.
+
+See https://avd.aquasec.com/misconfig/ksv-0118
+────────────────────────────────────────
+ k8s/api-deployment.yaml:16-41
+────────────────────────────────────────
+  16 ┌     spec:
+  17 │      containers:
+  18 │        - name: fastapi
+  19 │          image: ghcr.io/taha-khouildi/secure-cloud-api:latest
+  20 │          ports:
+  21 │            - containerPort: 8000
+  22 │          readinessProbe:
+  23 │            httpGet:
+  24 └              path: /health
+  ..   
+────────────────────────────────────────
+
+
+
+k8s/postgres-deployment.yaml (kubernetes)
+=========================================
+Tests: 23 (SUCCESSES: 21, FAILURES: 2)
+Failures: 2 (HIGH: 2, CRITICAL: 0)
+
+KSV-0014 (HIGH): Container 'postgres' of Deployment 'postgres' should set 'securityContext.readOnlyRootFilesystem' to true
+════════════════════════════════════════
+An immutable root file system prevents applications from writing to their local disk. This can limit intrusions, as attackers will not be able to tamper with the file system or write foreign executables to disk.
+
+See https://avd.aquasec.com/misconfig/ksv-0014
+────────────────────────────────────────
+ k8s/postgres-deployment.yaml:17-61
+────────────────────────────────────────
+  17 ┌         - name: postgres
+  18 │           image: postgres:18
+  19 │ 
+  20 │ 
+  21 │           securityContext:
+  22 │             appArmorProfile:
+  23 │               type: Unconfined
+  24 │ 
+  25 └           env:
+  ..   
+────────────────────────────────────────
+
+
+KSV-0118 (HIGH): deployment postgres in secure-cloud-api namespace is using the default security context, which allows root privileges
+════════════════════════════════════════
+Security context controls the allocation of security parameters for the pod/container/volume, ensuring the appropriate level of protection. Relying on default security context may expose vulnerabilities to potential attacks that rely on privileged access.
+
+See https://avd.aquasec.com/misconfig/ksv-0118
+────────────────────────────────────────
+ k8s/postgres-deployment.yaml:15-68
+────────────────────────────────────────
+  15 ┌     spec:
+  16 │       containers:
+  17 │         - name: postgres
+  18 │           image: postgres:18
+  19 │ 
+  20 │ 
+  21 │           securityContext:
+  22 │             appArmorProfile:
+  23 └               type: Unconfined
+  ..   
+────────────────────────────────────────
+
+

@@ -581,3 +581,101 @@ Created `todo_db` using `psql`, then executed the existing `db/init.sql` to crea
 - `GET /todos` returned the saved Todo.
 
 **Lesson learned:** A Kubernetes Pod showing `Running` does not guarantee the application inside it is healthy. Application readiness checks and careful log inspection are essential.
+
+### Finding: Missing FastAPI Kubernetes Security Context
+
+**Discovery:** Trivy configuration scan.
+
+**Before:** 3 HIGH findings:
+- KSV-0014: Writable container root filesystem.
+- KSV-0118: Missing container security context.
+- KSV-0118: Missing Pod security context.
+
+**Risk:** A compromised container could have unnecessary privileges
+and potentially modify files in its root filesystem.
+
+**Fix:**
+- Enforced non-root execution (UID 10001).
+- Disabled privilege escalation.
+- Enabled a read-only root filesystem.
+- Dropped all Linux capabilities.
+- Enabled the RuntimeDefault seccomp profile.
+
+**Verification:**
+- Kubernetes Deployment rollout succeeded.
+- /health, /db-health, and /metrics returned HTTP 200.
+- Trivy HIGH findings decreased from 3 to 0.
+
+**Status:** Fixed and verified.
+
+### Finding: PostgreSQL Pod Missing Security Context
+
+**Discovery:** Trivy configuration scan, KSV-0118 (HIGH).
+
+**Before:** PostgreSQL had no Pod-level security context.
+
+**Risk:** Kubernetes used default security settings without an
+explicit seccomp restriction.
+
+**Fix:** Added `seccompProfile: RuntimeDefault` at the Pod level.
+
+**Verification:**
+
+- Kubernetes Deployment rollout succeeded.
+- FastAPI `/db-health` confirmed PostgreSQL connectivity.
+- Trivy HIGH findings decreased from 2 to 1.
+- KSV-0118 was no longer reported.
+
+**Status:** Fixed and verified.
+
+**Remaining risk:** KSV-0014 (writable root filesystem).
+Requires further testing before applying read-only restrictions.
+
+### Finding: PostgreSQL Writable Root Filesystem
+
+**Discovery:** Trivy configuration scan reported KSV-0014 (HIGH).
+
+**Risk:** A writable root filesystem allows a compromised container process to modify more files than necessary.
+
+**Initial test:** Enabled `readOnlyRootFilesystem: true` in an isolated PostgreSQL deployment. PostgreSQL crashed because it could not create a lock file in `/var/run/postgresql`.
+
+**Root cause:** PostgreSQL requires writable directories for runtime files, even when its main filesystem is read-only.
+
+**Fix:**
+
+- Enabled `readOnlyRootFilesystem: true`.
+- Kept persistent database storage mounted at `/var/lib/postgresql`.
+- Added an `emptyDir` volume at `/var/run/postgresql` for runtime files.
+- Added an `emptyDir` volume at `/tmp` for temporary files.
+
+**Verification:**
+
+- PostgreSQL Deployment rolled out successfully.
+- PostgreSQL and FastAPI Pods were ready.
+- Existing database data remained accessible (`SELECT COUNT(*) FROM todos;` returned 1).
+- FastAPI `/db-health` returned `{"database":"connected"}`.
+- Trivy reported 0 misconfigurations for `postgres-deployment.yaml`.
+
+**Status:** Fixed and verified.
+
+**Remaining limitation:** PostgreSQL retains `appArmorProfile: Unconfined` as a workaround for a local k3s/kernel compatibility issue. This must be revisited before production deployment.
+
+### Finding: PostgreSQL Accessible from Unrelated Kubernetes Pods
+
+**Discovery:** No NetworkPolicy existed in the `secure-cloud-api` namespace. A temporary BusyBox Pod successfully connected to the PostgreSQL Service on TCP port 5432.
+
+**Evidence before fix:** `db (10.43.240.9:5432) open`
+
+**Risk:** Unrelated or compromised Pods could reach PostgreSQL over the cluster network, increasing its attack surface.
+
+**Fix:** Created `k8s/postgres-networkpolicy.yaml` to allow incoming TCP connections on port 5432 only from Pods labeled `app=fastapi` in the same namespace.
+
+**Verification:**
+
+- The unrelated `network-test` Pod's connection attempt failed with exit code 1.
+- FastAPI `/db-health` still returned `{"database":"connected"}`.
+- The NetworkPolicy was created successfully.
+
+**Status:** Fixed and verified for the tested connection paths.
+
+**Remaining limitation:** Access is controlled using Kubernetes Pod labels, not application authentication. PostgreSQL credentials remain necessary.
