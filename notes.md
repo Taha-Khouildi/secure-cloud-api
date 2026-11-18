@@ -679,3 +679,24 @@ Requires further testing before applying read-only restrictions.
 **Status:** Fixed and verified for the tested connection paths.
 
 **Remaining limitation:** Access is controlled using Kubernetes Pod labels, not application authentication. PostgreSQL credentials remain necessary.
+
+### Finding: Missing Kubernetes CPU and Memory Limits
+
+**Discovery:** Inspected the resource configuration of the FastAPI and PostgreSQL Deployments using `kubectl`. Both returned `{}`, indicating that no CPU or memory requests or limits were configured.
+
+**Risk:** Without resource limits, a malfunctioning or compromised container could consume excessive CPU or memory and affect other workloads on the Kubernetes node.
+
+**Fix:**
+
+- FastAPI: CPU request 100m, limit 500m; memory request 128Mi, limit 256Mi.
+- PostgreSQL: CPU request 100m, limit 1000m; memory request 256Mi, limit 1Gi.
+
+**Verification:**
+
+- Both Kubernetes Deployments rolled out successfully.
+- FastAPI `/db-health` returned `{"database":"connected"}`.
+- `kubectl get deployments` confirmed that CPU and memory requests and limits were present.
+
+**Status:** Fixed and verified for configuration and basic functionality.
+
+**Remaining work:** Perform load testing and monitor actual memory usage to confirm that the selected limits are appropriate.

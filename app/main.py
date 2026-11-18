@@ -2,8 +2,10 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from prometheus_fastapi_instrumentator import Instrumentator
 from app.database import get_connection
+from app.request_size import RequestSizeLimitMiddleware
 
 app = FastAPI()
+app.add_middleware(RequestSizeLimitMiddleware, max_body_size=1024 * 1024)
 Instrumentator().instrument(app).expose(app)
 
 class TodoCreate(BaseModel):

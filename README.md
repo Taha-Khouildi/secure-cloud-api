@@ -4,7 +4,7 @@ A containerized **Todo REST API** built with **FastAPI** and **PostgreSQL**, dep
 
 The API is intentionally simple. The goal of this portfolio project is to learn **DevOps, cloud infrastructure, CI/CD, and cloud security** by building and documenting a complete deployment workflow.
 
-**Current status:** The API has been successfully deployed and tested on an Azure Linux VM. The infrastructure was destroyed afterward to conserve Azure for Students credits.
+**Current status:** The API has been successfully deployed and tested on an Azure Linux VM and a local k3s cluster. The Azure infrastructure was destroyed afterward to conserve Azure for Students credits. Local Kubernetes security testing verified explicit security contexts, read-only root filesystems, and a PostgreSQL NetworkPolicy for the tested connection paths. Detailed results are recorded in [notes.md](notes.md).
 
 ## Features
 
@@ -21,6 +21,9 @@ The API is intentionally simple. The goal of this portfolio project is to learn 
 - Scan Docker images with Trivy.
 - Publish tested Docker images to GitHub Container Registry (GHCR).
 - Deploy the published image to Azure using Docker Compose.
+- Run FastAPI and PostgreSQL on local k3s with readiness probes and persistent database storage.
+- Harden Kubernetes containers and restrict PostgreSQL ingress to FastAPI Pods.
+- Expose Prometheus metrics at `GET /metrics`.
 
 ## Technology Stack
 
@@ -30,12 +33,14 @@ The API is intentionally simple. The goal of this portfolio project is to learn 
 | Database | PostgreSQL 18 | Persist Todo records |
 | Database driver | psycopg 3 | Connect Python to PostgreSQL |
 | Containers | Docker, Docker Compose | Package and run the application |
+| Kubernetes | k3s | Run and secure the local cluster deployment |
 | Infrastructure | Terraform, AzureRM provider | Provision cloud resources |
 | Cloud platform | Microsoft Azure | Host the deployment |
 | VM configuration | cloud-init | Install software and clone the repository |
 | CI/CD | GitHub Actions | Test, scan, and publish images |
 | Container registry | GitHub Container Registry | Store the application image |
-| Security scanning | Trivy | Detect container vulnerabilities |
+| Security scanning | Trivy | Detect container vulnerabilities and configuration findings |
+| Observability configuration | Prometheus, Grafana, Loki, Alloy | Define metrics, dashboards, alerts, and log collection |
 | Version control | Git, GitHub | Manage source code and automation |
 
 ## Project Structure
@@ -50,6 +55,10 @@ secure-cloud-api/
 │   └── database.py            # PostgreSQL connection helper
 ├── db/
 │   └── init.sql               # Initial database schema
+├── k8s/                       # Deployments, Services, PVC, NetworkPolicy, ServiceMonitor
+├── monitoring/                # Monitoring values, dashboard, and alert rule
+├── security-tests/
+│   └── postgres-readonly.yaml  # Isolated PostgreSQL read-only filesystem test
 ├── terraform/
 │   ├── main.tf                # Azure infrastructure resources
 │   ├── providers.tf           # Terraform provider configuration
@@ -661,12 +670,16 @@ The `k8s/` directory contains YAML manifests defining:
 - PostgreSQL Deployment and ClusterIP Service.
 - PersistentVolumeClaim for PostgreSQL data.
 - Readiness probes for FastAPI and PostgreSQL.
+- Pod and container security settings, including read-only root filesystems.
+- PostgreSQL ingress NetworkPolicy allowing FastAPI Pods in the same namespace.
+
+The optional `k8s/api-servicemonitor.yaml` defines Prometheus scraping and requires Prometheus Operator resources in a separate `monitoring` namespace.
 
 The application also uses a Kubernetes Secret named `postgres-secret` for database credentials and a ConfigMap named `postgres-init` containing the SQL initialization script.
 
 ### Deployment
 
-**Prerequisites:** A running k3s cluster, the `secure-cloud-api` namespace, and access to the published GHCR image.
+**Prerequisites:** A running k3s cluster with NetworkPolicy enforcement enabled, the `secure-cloud-api` namespace, and access to the published GHCR image.
 
 Create the PostgreSQL Secret securely before deploying. See the [learning notes](notes.md) for the configuration and security considerations.
 
@@ -678,16 +691,31 @@ sudo k3s kubectl create configmap postgres-init \
   --from-file=init.sql=db/init.sql
 ```
 
-Apply the manifests:
+Apply the core application manifests:
 
 ```bash
-sudo k3s kubectl apply -f k8s/
+sudo k3s kubectl apply \
+  -f k8s/postgres-pvc.yaml \
+  -f k8s/postgres-service.yaml \
+  -f k8s/postgres-networkpolicy.yaml \
+  -f k8s/postgres-deployment.yaml \
+  -f k8s/api-service.yaml \
+  -f k8s/api-deployment.yaml
+```
+
+Wait for both Deployments:
+
+```bash
+sudo k3s kubectl rollout status deployment/postgres \
+  -n secure-cloud-api --timeout=120s
+sudo k3s kubectl rollout status deployment/fastapi \
+  -n secure-cloud-api --timeout=120s
 ```
 
 Check the application and storage:
 
 ```bash
-sudo k3s kubectl get pods,pvc,services -n secure-cloud-api
+sudo k3s kubectl get pods,pvc,services,networkpolicies -n secure-cloud-api
 ```
 
 Forward the API Service to your laptop:
@@ -704,6 +732,7 @@ In another terminal, test:
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/db-health
 curl http://127.0.0.1:8000/todos
+curl http://127.0.0.1:8000/metrics
 ```
 
 ### Verification
@@ -714,6 +743,55 @@ The local deployment was tested successfully:
 - The API connected to PostgreSQL through its ClusterIP Service.
 - Creating and retrieving Todos worked.
 - PostgreSQL data survived a Pod replacement.
+- After enabling PostgreSQL's read-only root filesystem, existing data remained accessible (`SELECT COUNT(*) FROM todos;` returned `1`) and `/db-health` returned `{"database":"connected"}`.
+- After applying the NetworkPolicy, the unrelated `network-test` Pod's connection attempt failed with exit code `1`, while FastAPI retained database connectivity.
+
+These are recorded local test results. Fresh-cluster initialization and other network paths require separate verification.
+
+### Kubernetes security settings
+
+| Workload | Configured protections |
+| --- | --- |
+| FastAPI | Non-root execution as UID `10001`, privilege escalation disabled, all Linux capabilities dropped, read-only root filesystem, and Pod-level `RuntimeDefault` seccomp profile |
+| PostgreSQL | Pod-level `RuntimeDefault` seccomp profile, read-only root filesystem, persistent storage at `/var/lib/postgresql`, and writable `emptyDir` volumes at `/var/run/postgresql` and `/tmp` |
+
+The initial read-only PostgreSQL test failed because PostgreSQL could not create its socket lock file under `/var/run/postgresql`. The writable runtime and temporary volumes resolved that failure while keeping the root filesystem read-only. The isolated test manifest is in [security-tests/postgres-readonly.yaml](security-tests/postgres-readonly.yaml); it expects its own `postgres-security-test` namespace, Secret, ConfigMap, and PVC.
+
+The [PostgreSQL NetworkPolicy](k8s/postgres-networkpolicy.yaml) selects Pods labeled `app=postgres` and allows incoming TCP port `5432` from Pods labeled `app=fastapi` in `secure-cloud-api`. It controls ingress; it does not define an egress policy. Pod labels determine the allowed sources, and PostgreSQL credentials remain necessary.
+
+NetworkPolicy enforcement requires a supporting network controller. Policies are additive, so another policy selecting PostgreSQL could allow additional traffic. See the [Kubernetes NetworkPolicy documentation](https://kubernetes.io/docs/concepts/services-networking/network-policies/).
+
+### Configuration scanning and recorded findings
+
+With Trivy installed, scan Kubernetes configuration separately from the CI image vulnerability scan:
+
+```bash
+trivy config k8s/
+```
+
+This uses Trivy's [misconfiguration scanner](https://trivy.dev/docs/latest/scanner/misconfiguration/). The current GitHub Actions workflow scans the application image; Kubernetes configuration scanning is performed manually.
+
+| Finding | Recorded result after the fix |
+| --- | --- |
+| FastAPI: KSV-0014 and KSV-0118 | HIGH findings decreased from `3` to `0`; `/health`, `/db-health`, and `/metrics` returned HTTP `200` |
+| PostgreSQL: KSV-0118 | Explicit Pod seccomp profile added; HIGH findings decreased from `2` to `1` |
+| PostgreSQL: KSV-0014 | Read-only filesystem and writable mounts added; Trivy reported `0` misconfigurations for `postgres-deployment.yaml` |
+| PostgreSQL reachable from unrelated Pods | NetworkPolicy blocked the tested unrelated Pod while preserving FastAPI access |
+
+The repository's `trivy-config.txt` contains the earlier scan findings. Use a new scan for current results; a clean result for one manifest does not establish cluster-wide security. See [notes.md](notes.md) for the discovery, fixes, verification, and remaining limitations.
+
+### Optional monitoring configuration
+
+The repository includes a `/metrics` endpoint, a ServiceMonitor, Prometheus/Grafana values, a Grafana dashboard, a `FastAPIDown` alert rule, and Loki/Alloy values for log collection. These files describe the monitoring setup; end-to-end scraping, log ingestion, and alert delivery need their own verification.
+
+Once Prometheus Operator, its custom resource definitions, and the `monitoring` namespace are available, apply the monitoring resources:
+
+```bash
+sudo k3s kubectl apply -f k8s/api-servicemonitor.yaml
+sudo k3s kubectl apply -f monitoring/fastapi-alerts.yaml
+```
+
+The ServiceMonitor and alert rule use the label `release=monitoring`; the Prometheus installation must select these resources.
 
 ### Known limitation
 
@@ -734,6 +812,9 @@ The existing PostgreSQL volume also required manual creation of `todo_db` and ex
 | FastAPI returns HTTP `405` | Confirm the requested endpoint supports that HTTP method. |
 | `/todos` returns HTTP `500` | Inspect application and database logs. |
 | PostgreSQL connection fails | Check the database container and environment variables. |
+| PostgreSQL reports a read-only socket lock file | Confirm the writable `emptyDir` mount at `/var/run/postgresql`; retain the database PVC and `/tmp` mount. |
+| FastAPI cannot connect after a NetworkPolicy change | Check Pod labels (`app=fastapi`), the `secure-cloud-api` namespace, TCP port `5432`, readiness, and credentials. |
+| `no matches for kind "ServiceMonitor"` | Deploy the core application manifests separately, then install Prometheus Operator before applying the ServiceMonitor. |
 | Terraform fails authentication | Verify `az login` and the selected subscription. |
 | SSH connection times out | Check the VM public IP and the allowed SSH source IP. |
 | Docker permission denied | Use `sudo docker` rather than granting Docker group access. |
@@ -775,6 +856,11 @@ This is an educational portfolio project, **not a production-ready service**.
 - Database credentials excluded from Git.
 - Automated container vulnerability scanning.
 - CI failure on fixable HIGH and CRITICAL findings.
+- Kubernetes FastAPI non-root execution, disabled privilege escalation, and dropped Linux capabilities.
+- Pod-level `RuntimeDefault` seccomp profiles and read-only root filesystems for FastAPI and PostgreSQL.
+- PostgreSQL writable paths isolated in mounted volumes.
+- PostgreSQL ingress restricted by NetworkPolicy to FastAPI-labeled Pods in the same namespace for the tested connection paths.
+- Manual Trivy configuration scans and documented security findings.
 - Cloud infrastructure destroyed after testing to reduce cost and exposure.
 
 ## Current Limitations
@@ -784,7 +870,8 @@ This is an educational portfolio project, **not a production-ready service**.
 - No production secrets-management service.
 - No automated deployment from GitHub Actions to Azure.
 - Local k3s deployment uses a temporary AppArmor workaround; fully automated fresh-cluster initialization remains unverified.
-- No centralized monitoring or alerting.
+- Monitoring and logging configuration is present; end-to-end collection and alert delivery are not verified in the recorded results.
+- PostgreSQL NetworkPolicy relies on Pod labels and network enforcement; it does not replace database authentication or restrict egress.
 - No comprehensive security assessment.
 - No production-grade backup or high-availability design.
 
@@ -801,9 +888,9 @@ These limitations are intentionally documented so that completed work is not con
 | 1 | FastAPI + PostgreSQL with Docker Compose | ✅ Completed |
 | 2 | Azure infrastructure with Terraform | ✅ Completed and tested |
 | 3 | GitHub Actions, Trivy, GHCR, and VM deployment | ✅ Core workflow completed |
-| 4 | k3s deployment | ✅ Locally tested; fresh-cluster initialization unverified |
-| 5 | Prometheus, Grafana, Loki, and alerting | Planned |
-| 6 | Security testing and findings write-up | Planned |
+| 4 | k3s deployment | ✅ Locally tested with security settings and NetworkPolicy; fresh-cluster initialization unverified |
+| 5 | Prometheus, Grafana, Loki, and alerting | Configuration present; end-to-end verification pending |
+| 6 | Security testing and findings write-up | Local configuration and network findings fixed and documented; broader assessment pending |
 | 7 | Final architecture diagram and portfolio documentation | Planned |
 
 ### Stage 3 Remaining Improvements
