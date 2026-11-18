@@ -700,3 +700,25 @@ Requires further testing before applying read-only restrictions.
 **Status:** Fixed and verified for configuration and basic functionality.
 
 **Remaining work:** Perform load testing and monitor actual memory usage to confirm that the selected limits are appropriate.
+
+### Finding: Missing HTTP Request Body Size Limit
+
+**Discovery:** A 10 MB JSON request to `POST /todos` returned HTTP 422, showing that field-length validation rejected the input but no HTTP request-body limit was demonstrated.
+
+**Risk:** Excessively large requests may consume unnecessary CPU and memory, especially under concurrent traffic.
+
+**Fix:** Added `RequestSizeLimitMiddleware` to enforce a 1 MiB request-body limit. The middleware checks both the declared `Content-Length` and the bytes actually received.
+
+**Verification:**
+
+- Local health endpoint: HTTP 200.
+- Malformed JSON: HTTP 422.
+- Oversized request: HTTP 413.
+- All 6 automated tests passed, including the streamed-request test.
+- GitHub Actions workflow succeeded.
+- Kubernetes deployment succeeded.
+- Deployed FastAPI health: HTTP 200.
+- Deployed database health: HTTP 200.
+- Deployed 10 MB request: HTTP 413.
+
+**Status:** Fixed and verified.
