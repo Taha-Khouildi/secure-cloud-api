@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -9,6 +10,13 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 app = FastAPI()
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
 limiter = Limiter(key_func=get_remote_address)
 
 app.state.limiter = limiter

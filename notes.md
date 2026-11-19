@@ -722,3 +722,23 @@ Requires further testing before applying read-only restrictions.
 - Deployed 10 MB request: HTTP 413.
 
 **Status:** Fixed and verified.
+
+### Finding: Missing API Rate Limiting
+
+**Discovery:** Sent 200 sequential requests to `/health`. All 200 returned HTTP 200. No rate limit was triggered. Code review confirmed no rate-limiting mechanism was configured.
+
+**Risk:** Excessive requests can consume server resources and reduce application availability.
+
+**Fix:** Added SlowAPI rate limiting to `GET /todos` and `POST /todos`, configured for 60 requests per minute per client IP address. Health and monitoring endpoints remain unrestricted.
+
+**Verification:**
+
+- All 8 automated tests passed.
+- GitHub Actions completed successfully.
+- Updated FastAPI image deployed to Kubernetes.
+- Sent 65 requests to `GET /todos`.
+- Received 60 HTTP 200 responses and 5 HTTP 429 responses.
+
+**Status:** Fixed and verified for the tested endpoint.
+
+**Remaining limitations:** Rate-limit counters are stored in memory and are not shared across multiple replicas. IP-based identification may also require additional proxy configuration in production.
