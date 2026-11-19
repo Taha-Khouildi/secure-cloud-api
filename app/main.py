@@ -3,8 +3,20 @@ from pydantic import BaseModel, Field
 from prometheus_fastapi_instrumentator import Instrumentator
 from app.database import get_connection
 from app.request_size import RequestSizeLimitMiddleware
+from fastapi import FastAPI, Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 app = FastAPI()
+limiter = Limiter(key_func=get_remote_address)
+
+app.state.limiter = limiter
+app.add_exception_handler(
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler,
+)
+
 app.add_middleware(RequestSizeLimitMiddleware, max_body_size=1024 * 1024)
 Instrumentator().instrument(app).expose(app)
 
@@ -29,7 +41,8 @@ def db_health():
 
 
 @app.get("/todos")
-def get_todos():
+@limiter.limit("60/minute")
+def get_todos(request: Request):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("SELECT id, title, completed FROM todos ORDER BY id")
@@ -41,7 +54,8 @@ def get_todos():
 
 
 @app.post("/todos", status_code=201)
-def create_todo(todo: TodoCreate):
+@limiter.limit("60/minute")
+def create_todo(request: Request, todo: TodoCreate):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
