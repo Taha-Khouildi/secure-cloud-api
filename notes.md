@@ -476,7 +476,7 @@ This disables automatic registration; the resource providers needed by the confi
 
 [terraform/cloud-init.yaml](terraform/cloud-init.yaml) is supplied to the VM through Terraform's `custom_data`. During initial provisioning it updates package lists, installs `docker.io`, `docker-compose-v2`, and `git`, and clones this repository into `/opt/secure-cloud-api`.
 
-The bootstrap does not create `.env`, pull the GHCR image, or start the stack. These remain manual actions, documented in the [Azure deployment guide](README.md#azure-deployment).
+The bootstrap does not create `.env`, pull the GHCR image, or start the stack. These remain manual actions, documented in the [Azure deployment guide](docs/azure.md).
 
 [compose.deploy.yaml](compose.deploy.yaml) selects the GHCR image and uses `!reset null` to remove the local build setting. It must be combined with the base Compose file. The VM needs a Compose version that supports that tag; check it after cloud-init finishes.
 
@@ -760,9 +760,9 @@ Requires further testing before applying read-only restrictions.
 
 - Kubernetes Secret now reports `POSTGRES_PASSWORD: 48 bytes`.
 - FastAPI and PostgreSQL Pods are both `1/1 Running`.
-- Database authentication and existing Todo records should be checked after rotation.
+- A later user-supplied record of the earlier terminal checks confirms that `GET /db-health` returned `{"database":"connected"}` and `GET /todos` returned both existing records after rotation (responses preserved below).
 
-**Status:** Password rotation completed; final database connectivity verification pending.
+**Status:** Password rotation, database authentication, and access to existing Todo records verified through earlier interactive testing; the supplied API responses are preserved below. These checks were not rerun during the documentation update.
 
 **Remaining limitation:** Kubernetes Secrets require appropriate RBAC and encryption-at-rest configuration for production use.
 
@@ -808,3 +808,58 @@ Set `imagePullPolicy: IfNotPresent` for the pinned image.
 **Status:** Accepted risk for the local development environment.
 
 **Production requirement:** Investigate and resolve the underlying AppArmor compatibility problem, then enable an appropriate AppArmor profile before production deployment.
+
+### Evidence supplement: Todo Records After Password Rotation
+
+**Source:** User-supplied record of earlier terminal verification, incorporated during the documentation restructure. No new runtime checks were performed during this edit.
+
+After password rotation from 6 to 48 bytes, `GET /db-health` returned:
+
+```json
+{"database":"connected"}
+```
+
+`GET /todos` returned:
+
+```json
+[
+  {"id":1,"title":"Learned Kubernetes with k3s","completed":false},
+  {"id":2,"title":"'; DROP TABLE todos; --","completed":false}
+]
+```
+
+**Status:** Verified through earlier interactive testing. These supplied responses record successful authentication and access to both existing Todo records after rotation. They are not a newly captured terminal transcript.
+
+### PostgreSQL Startup User and Remaining Hardening Limitation
+
+**Source:** User-reported inspection from an earlier terminal session. The exact process listing and startup-script artifact were not supplied; repeatable verification is recommended.
+
+**Observed:** `kubectl exec` used UID 0 by default, while the main PostgreSQL server process ran as the `postgres` user. The user reported inspecting the official image's root-then-`gosu` privilege-dropping startup behavior.
+
+**Repository configuration:** The PostgreSQL manifest does not enforce `runAsNonRoot` or specify `runAsUser`. The entrypoint script is not stored in this repository.
+
+**Status:** Previously inspected; this does not establish that the PostgreSQL server runs continuously as root. Enforced non-root container startup remains a hardening limitation alongside the accepted AppArmor risk. Compatibility with the image's initialization and mounted-volume permissions requires verification before changing the security context.
+
+## Stage 5 — Earlier Monitoring Observations
+
+**Evidence source:** User report of earlier interactive tests, added during the documentation restructure. No new monitoring checks were performed. Supporting screenshots, timestamped alert logs, and exported Loki query results were not preserved or supplied.
+
+### FastAPIDown Alert Firing and Clearing
+
+The user reported scaling the FastAPI Deployment to zero replicas and observing `FastAPIDown` transition from `PENDING` to `FIRING`. After restoring one replica, the alert returned to `INACTIVE`.
+
+**Status:** Previously observed through interactive testing; supporting artifact not preserved. External alert notification is not verified and remains unimplemented in the documented setup.
+
+### Loki Log Visibility
+
+The user reported viewing logs from both FastAPI and PostgreSQL in Grafana through the Loki data source, with namespace, Pod, and container labels.
+
+**Status:** Previously observed through interactive testing; supporting artifact not preserved. Repeat the query and save evidence for a reproducible record.
+
+### Remaining Verification Work
+
+- Fresh-cluster initialization is not verified; the recorded Kubernetes database setup required manual repair of an existing volume.
+- ZAP and broader security testing have not been done; no results are recorded.
+- Load testing and resource-limit suitability are not verified.
+- The clean-clone Compose setup and full Azure application deployment with the current bootstrap are not verified in these notes.
+- No authentication or TLS is implemented in the repository's API deployment.
