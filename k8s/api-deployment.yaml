@@ -34,8 +34,8 @@ spec:
              drop:
                - ALL
 
-         image: ghcr.io/taha-khouildi/secure-cloud-api:latest
-         imagePullPolicy: Always
+         image: ghcr.io/taha-khouildi/secure-cloud-api@sha256:df533118daac9271dd03e38c9d1489f8aac530a456f0976802d5e726dca4adad
+         imagePullPolicy: IfNotPresent
          resources:
             requests:
               cpu: "100m"

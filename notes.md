@@ -742,3 +742,69 @@ Requires further testing before applying read-only restrictions.
 **Status:** Fixed and verified for the tested endpoint.
 
 **Remaining limitations:** Rate-limit counters are stored in memory and are not shared across multiple replicas. IP-based identification may also require additional proxy configuration in production.
+
+### Finding: Weak PostgreSQL Password
+
+**Discovery:** Inspected Kubernetes Secret metadata using `kubectl describe secret`. The original PostgreSQL password contained only 6 bytes.
+
+**Risk:** Short passwords may be easier to guess through brute-force or credential-guessing attacks.
+
+**Fix:**
+
+- Generated a cryptographically random 48-character password.
+- Updated the PostgreSQL `todo_user` account password.
+- Updated the existing Kubernetes Secret.
+- Restarted FastAPI so it receives the updated credentials.
+
+**Verification:**
+
+- Kubernetes Secret now reports `POSTGRES_PASSWORD: 48 bytes`.
+- FastAPI and PostgreSQL Pods are both `1/1 Running`.
+- Database authentication and existing Todo records should be checked after rotation.
+
+**Status:** Password rotation completed; final database connectivity verification pending.
+
+**Remaining limitation:** Kubernetes Secrets require appropriate RBAC and encryption-at-rest configuration for production use.
+
+### Finding: Mutable Docker Image Tag
+
+**Discovery:** The FastAPI Kubernetes Deployment referenced `ghcr.io/taha-khouildi/secure-cloud-api:latest`.
+
+**Risk:** The `latest` tag can point to different image contents over time. Pod restarts could therefore deploy a different application version without an intentional configuration change.
+
+**Fix:** Replaced the mutable tag with the exact SHA-256 image digest:
+
+`sha256:df533118daac9271dd03e38c9d1489f8aac530a456f0976802d5e726dca4adad`
+
+Set `imagePullPolicy: IfNotPresent` for the pinned image.
+
+**Verification:**
+
+- Kubernetes Deployment successfully updated.
+- The running Deployment references the intended image digest.
+- FastAPI `/db-health` returned `{"database":"connected"}`.
+
+**Status:** Fixed and verified.
+
+**Operational consideration:** Future application releases require intentionally updating the pinned digest.
+
+### Accepted Risk: PostgreSQL AppArmor Unconfined
+
+**Discovery:** PostgreSQL experienced startup problems with the default AppArmor configuration in the local k3s environment.
+
+**Workaround:** Set `appArmorProfile: Unconfined` in the PostgreSQL container security context.
+
+**Risk:** Disabling AppArmor confinement removes one layer of protection that could otherwise restrict a compromised PostgreSQL process.
+
+**Compensating controls:**
+
+- Read-only container root filesystem.
+- Explicit writable volumes for database and runtime files.
+- Seccomp `RuntimeDefault` profile.
+- NetworkPolicy restricting PostgreSQL access to FastAPI Pods.
+- CPU and memory limits.
+- Strong PostgreSQL password.
+
+**Status:** Accepted risk for the local development environment.
+
+**Production requirement:** Investigate and resolve the underlying AppArmor compatibility problem, then enable an appropriate AppArmor profile before production deployment.

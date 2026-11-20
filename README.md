@@ -4,7 +4,7 @@ A containerized **Todo REST API** built with **FastAPI** and **PostgreSQL**, dep
 
 The API is intentionally simple. The goal of this portfolio project is to learn **DevOps, cloud infrastructure, CI/CD, and cloud security** by building and documenting a complete deployment workflow.
 
-**Current status:** The API has been successfully deployed and tested on an Azure Linux VM and a local k3s cluster. The Azure infrastructure was destroyed afterward to conserve Azure for Students credits. Local Kubernetes security testing verified explicit security contexts, read-only root filesystems, and a PostgreSQL NetworkPolicy for the tested connection paths. Detailed results are recorded in [notes.md](notes.md).
+**Current status:** The API has been successfully deployed and tested on an Azure Linux VM and a local k3s cluster. The Azure infrastructure was destroyed afterward to conserve Azure for Students credits. Local Kubernetes security testing verified explicit security contexts, read-only root filesystems, and a PostgreSQL NetworkPolicy for the tested connection paths. The PostgreSQL password has since been rotated; database connectivity and existing Todo records still need verification after rotation. Detailed results are recorded in [notes.md](notes.md).
 
 ## Features
 
@@ -748,6 +748,19 @@ The local deployment was tested successfully:
 
 These are recorded local test results. Fresh-cluster initialization and other network paths require separate verification.
 
+### PostgreSQL password rotation
+
+Secret metadata inspection with `kubectl describe secret` showed that the original PostgreSQL password contained only `6 bytes`. It was replaced with a cryptographically random 48-character password. The `todo_user` account password and existing `postgres-secret` Kubernetes Secret were updated, and FastAPI was restarted to receive the new credentials.
+
+Recorded checks after rotation:
+
+- The Secret reports `POSTGRES_PASSWORD: 48 bytes`.
+- FastAPI and PostgreSQL Pods are both `1/1 Running`.
+
+**Status:** Password rotation completed; final database connectivity verification pending. With the API port-forward running, check `/db-health` and `/todos` using the commands above to confirm database authentication and access to existing Todo records. The earlier successful database tests predate this rotation.
+
+See the [password finding in notes.md](notes.md#finding-weak-postgresql-password) for details. Production use of Kubernetes Secrets also requires appropriate RBAC and encryption-at-rest configuration.
+
 ### Kubernetes security settings
 
 | Workload | Configured protections |
@@ -777,6 +790,7 @@ This uses Trivy's [misconfiguration scanner](https://trivy.dev/docs/latest/scann
 | PostgreSQL: KSV-0118 | Explicit Pod seccomp profile added; HIGH findings decreased from `2` to `1` |
 | PostgreSQL: KSV-0014 | Read-only filesystem and writable mounts added; Trivy reported `0` misconfigurations for `postgres-deployment.yaml` |
 | PostgreSQL reachable from unrelated Pods | NetworkPolicy blocked the tested unrelated Pod while preserving FastAPI access |
+| Weak PostgreSQL password | Rotated from `6 bytes` to a random 48-character password; Secret updated and FastAPI restarted; final database connectivity verification pending |
 
 The repository's `trivy-config.txt` contains the earlier scan findings. Use a new scan for current results; a clean result for one manifest does not establish cluster-wide security. See [notes.md](notes.md) for the discovery, fixes, verification, and remaining limitations.
 
@@ -812,6 +826,7 @@ The existing PostgreSQL volume also required manual creation of `todo_db` and ex
 | FastAPI returns HTTP `405` | Confirm the requested endpoint supports that HTTP method. |
 | `/todos` returns HTTP `500` | Inspect application and database logs. |
 | PostgreSQL connection fails | Check the database container and environment variables. |
+| Database authentication fails after password rotation | Confirm the `todo_user` password matches `postgres-secret` and FastAPI was restarted to receive the updated credentials. |
 | PostgreSQL reports a read-only socket lock file | Confirm the writable `emptyDir` mount at `/var/run/postgresql`; retain the database PVC and `/tmp` mount. |
 | FastAPI cannot connect after a NetworkPolicy change | Check Pod labels (`app=fastapi`), the `secure-cloud-api` namespace, TCP port `5432`, readiness, and credentials. |
 | `no matches for kind "ServiceMonitor"` | Deploy the core application manifests separately, then install Prometheus Operator before applying the ServiceMonitor. |
@@ -868,6 +883,7 @@ This is an educational portfolio project, **not a production-ready service**.
 - No user authentication or authorization.
 - No TLS termination or public HTTPS endpoint.
 - No production secrets-management service.
+- Kubernetes Secrets require appropriate RBAC and encryption at rest; database authentication and existing Todo records still need verification after the latest password rotation.
 - No automated deployment from GitHub Actions to Azure.
 - Local k3s deployment uses a temporary AppArmor workaround; fully automated fresh-cluster initialization remains unverified.
 - Monitoring and logging configuration is present; end-to-end collection and alert delivery are not verified in the recorded results.
