@@ -8,7 +8,7 @@ I record implementation decisions, test results, and remaining limitations in [n
 
 - I tested API/database health, Todo creation and retrieval, and the security fixes below on my local k3s deployment.
 - I rotated the PostgreSQL password from 6 to 48 bytes, then checked `/db-health` and `/todos`: authentication succeeded and both existing records remained accessible. I preserved the [API responses in notes.md](notes.md#evidence-supplement-todo-records-after-password-rotation).
-- I tested `FastAPIDown` firing and clearing, and viewed FastAPI and PostgreSQL logs through Loki. I recorded the [results in notes.md](notes.md#stage-5--earlier-monitoring-observations); I did not preserve monitoring screenshots or exported logs.
+- I tested `FastAPIDown` firing and clearing, and viewed FastAPI and PostgreSQL logs through Loki. I recorded the [results in notes.md](notes.md#stage-5--earlier-monitoring-observations); I did not preserve screenshots of the alert transitions or exported Loki logs.
 - I provisioned Azure infrastructure, connected through SSH, and destroyed the resources in an earlier session. Full application deployment with the current bootstrap is **not verified**.
 - I accept PostgreSQL’s unconfined AppArmor profile only for local development. Fresh-cluster initialization is **not verified**; I have not implemented authentication, TLS, or external alert notification, or completed ZAP and broader security testing.
 
@@ -163,6 +163,8 @@ I added [tests](tests/) for health, metrics, the `nosniff` header, malformed JSO
 
 I recorded 6 passing tests for the [size-limit change](notes.md#finding-missing-http-request-body-size-limit), then 8 passing tests and a successful workflow for the [rate-limit change](notes.md#finding-missing-api-rate-limiting). Those counts describe the corresponding test sessions. I have not rerun the application suite for this documentation update.
 
+![GitHub Actions CI run showing successful tests, Docker image build, Trivy scan, and GHCR publishing](docs/images/git_actions.png)
+
 ## 4. Local Kubernetes Deployment
 
 The [Kubernetes guide](docs/kubernetes.md) contains prerequisites, SQL ConfigMap creation, application manifest application, rollout checks, Service port forwarding, and monitoring resource application.
@@ -232,6 +234,8 @@ I implemented request-size enforcement and rate limits in [app/request_size.py](
 
 Configuration sources: [ServiceMonitor](k8s/api-servicemonitor.yaml), [FastAPIDown rule](monitoring/fastapi-alerts.yaml), [Prometheus/Grafana values](monitoring/values.yaml), [Loki values](monitoring/loki-values.yaml), and [Alloy values](monitoring/alloy-values.yaml).
 
+![Grafana dashboard showing FastAPI request rate, server errors, and average response time](docs/images/dashboradGrafana.png)
+
 | Check | Recorded evidence and limits |
 | --- | --- |
 | FastAPIDown firing and clearing | I scaled FastAPI to zero and observed PENDING → FIRING. After I restored one replica, the alert returned to INACTIVE. |
@@ -239,7 +243,7 @@ Configuration sources: [ServiceMonitor](k8s/api-servicemonitor.yaml), [FastAPIDo
 | External alert notification | I have not implemented an external notification channel; delivery is **not verified**. |
 | PostgreSQL startup user | I confirmed UID 0 for default exec and the main PostgreSQL server running as `postgres`, with root-then-`gosu` startup. |
 
-I recorded these interactive test results in [notes.md](notes.md#stage-5--earlier-monitoring-observations). I did not preserve monitoring screenshots, timestamped alert logs, exported Loki queries, or the process listing. I plan to repeat those checks and save their outputs.
+I recorded these interactive test results in [notes.md](notes.md#stage-5--earlier-monitoring-observations). I did not preserve screenshots of the alert transitions, timestamped alert logs, exported Loki queries, or the process listing. I plan to repeat those checks and save their outputs.
 
 ### Evidence categories
 
