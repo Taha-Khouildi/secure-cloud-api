@@ -23,6 +23,50 @@ I record implementation decisions, test results, and remaining limitations in [n
 7. [Operating Guides](#7-operating-guides)
 8. [Limitations and Next Work](#8-limitations-and-next-work)
 
+## Architecture
+
+```mermaid
+flowchart TB
+    Developer["Developer"] -->|git push| GitHub["GitHub Repository"]
+    GitHub -->|triggers| CI["GitHub Actions CI"]
+    CI -->|tests + Trivy scan| GHCR["GitHub Container Registry"]
+
+    Developer -->|manual kubectl apply / rollout| K3S
+
+    subgraph K3S["Local k3s Cluster"]
+        subgraph APP["Namespace: secure-cloud-api"]
+            API["FastAPI Pod :8000"]
+            Policy["NetworkPolicy"]
+            DB["PostgreSQL Pod :5432"]
+            PVC[("PostgreSQL PVC")]
+
+            API -->|TCP 5432| Policy
+            Policy -->|allowed| DB
+            DB -->|persistent data| PVC
+        end
+
+        subgraph OBS["Namespace: monitoring"]
+            Prom["Prometheus"]
+            Grafana["Grafana"]
+            Alloy["Alloy"]
+            Loki["Loki"]
+            Alert["PrometheusRule: FastAPIDown"]
+
+            Prom -->|metrics| Grafana
+            Alloy -->|logs| Loki
+            Alert -->|evaluated by| Prom
+        end
+
+        Prom -->|scrapes /metrics| API
+        Alloy -.->|collects logs| API
+        Alloy -.->|collects logs| DB
+    end
+
+    GHCR -.->|image pulled during manual rollout| API
+
+    Terraform["Terraform"] -->|provisioned and tested separately| Azure["Azure VM — currently destroyed"]
+```
+
 ## Repository map
 
 | Path | Configuration or implementation |
